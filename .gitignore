@@ -1,0 +1,6 @@
+.pio
+.vscode
+include/hostdefs.h
+include/credentials.h
+*hostdefs*
+*credentials*
