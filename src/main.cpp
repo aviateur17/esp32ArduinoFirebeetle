@@ -11,7 +11,7 @@ A/C power?
 TelnetSpy?
 
 VBatt on A0 GPIO_NUM_36
-voltage divider 1M and 1Meg
+Need to add voltage divider 1M and 1Meg
 
 */
 
@@ -23,9 +23,10 @@ struct tm timeinfo;
 struct timeval tv;
 int ledBlinks = 2;
 //BaseType_t returncode;
-TaskHandle_t tskNtp, tskLedFlash, tskInitWifi, tskMqtt, tskPir, tskOta;
+TaskHandle_t tskNtp, tskLedFlash, tskInitWifi, tskMqtt, tskPir, tskOta, tskBme280;
 SemaphoreHandle_t semWifi;
 Preferences nvs;
+BlueDot_BME280 bme;
 
 // initialize LED on GPIO2 as output and Pull down
 void initLed(gpio_num_t pin) {
@@ -46,6 +47,47 @@ void initPir(gpio_num_t pin) {
   gpioPir.pull_down_en = GPIO_PULLDOWN_DISABLE;
   gpioPir.intr_type    = GPIO_INTR_DISABLE;
   ESP_ERROR_CHECK(gpio_config(&gpioPir));
+}
+
+bool initI2c() {
+  bool initResult;
+  initResult = Wire.begin(SDAPIN, SCLPIN, 100000);
+  Wire.setTimeOut(50);
+  return initResult;
+}
+
+void doBme280(void * param) {
+  float tempF, humPct, presshPa;
+  bool bmeDetected;
+
+  bme.parameter.communication = 0; // I2C comm
+  bme.parameter.I2CAddress = 0x77; // BME address 0x77
+  bme.parameter.sensorMode = 0b11; // Sensor Mode
+  bme.parameter.IIRfilter = 0b100;
+  bme.parameter.humidOversampling = 0b101;
+  bme.parameter.tempOversampling = 0b101;              //Temperature Oversampling for Sensor 1
+  bme.parameter.pressOversampling = 0b101; 
+  bme.parameter.pressureSeaLevel = 1013.25;  //default value of 1013.25 hPa (Sensor 
+  bme.parameter.tempOutsideFahrenheit = 85; 
+
+  while(bme.init() != 0x60) {
+    SERIAL_PORT.printf("%lu: BME280 Sensor not found!\n", TS);
+    bmeDetected = false;
+    vTaskDelay(10000/portTICK_PERIOD_MS);
+    //os_setTimedCallback(&bmejob, os_getTime() + sec2osticks(30), do_bme_recheck);
+  }
+  SERIAL_PORT.printf("%lu: BME280 Sensor found!\n", TS);
+  bmeDetected = true;
+
+  while(true) {
+    // Read Wx info from BME280
+    tempF = bme.readTempF() + TEMPOFFSET;
+    humPct = bme.readHumidity() + HUMOFFSET;
+    presshPa = bme.readPressure() + PRESSOFFSET;
+    SERIAL_PORT.printf("%lu: Temp: %.1f F | RH: %.0f % | Press: %.0f hPa\n", TS, tempF, humPct, presshPa);
+    vTaskDelay(30000/portTICK_PERIOD_MS);
+  }
+  vTaskDelete(NULL);
 }
 
 void doPir(void * param) {
@@ -144,6 +186,7 @@ void setup() {
   esp_info();
   initLed(LED);
   initPir(PIRPIN);
+  initI2c();
   if(nvs.begin("esp32", false))
     ESP_LOGI(TAG,"NVS Initialized.");
   else
@@ -167,6 +210,8 @@ void setup() {
   xTaskCreatePinnedToCore(&doPir, "PIR", 2048, NULL, 0, &tskPir, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
   xTaskCreatePinnedToCore(&doOta, "OTA", 2048, NULL, 0, &tskOta, app_cpu);
+  vTaskDelay(500/portTICK_PERIOD_MS);
+  xTaskCreatePinnedToCore(&doBme280, "BME280", 2048, NULL, 0, &tskBme280, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
 }
 
