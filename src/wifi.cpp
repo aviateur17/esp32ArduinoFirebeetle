@@ -1,11 +1,10 @@
 #include "jclwifi.h"
 
-//extern TelnetSpy ts;
 //extern bool wificonnected;
 extern struct timeval tv;
 time_t wifidisconnecttime = ULONG_MAX;
 extern SemaphoreHandle_t semWifi;
-#define TS (tv.tv_sec==NULL) ? millis() : tv.tv_sec
+extern TelnetSpy ts;
 
 void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info) {
   SERIAL_PORT.printf("%lu: WiFi connected.\n", TS);

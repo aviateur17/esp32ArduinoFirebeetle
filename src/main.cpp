@@ -8,10 +8,12 @@ BATTERY CHARging?
 battery voltage?
 battery level?
 A/C power?
-TelnetSpy?
+
+JSON format for MQTT messages
 
 VBatt on A0 GPIO_NUM_36
 Need to add voltage divider 1M and 1Meg
+
 
 */
 
@@ -22,11 +24,13 @@ char strftime_buf[64];
 struct tm timeinfo;
 struct timeval tv;
 int ledBlinks = 2;
-//BaseType_t returncode;
-TaskHandle_t tskNtp, tskLedFlash, tskInitWifi, tskMqtt, tskPir, tskOta, tskBme280;
+float tempF, humPct, presshPa;
+bool bmeDetected;
+TaskHandle_t tskNtp, tskLedFlash, tskInitWifi, tskMqtt, tskPir, tskOta, tskBme280, tskBtnPress, tskTelnetSpy, tskNeoMatrix;
 SemaphoreHandle_t semWifi;
 Preferences nvs;
 BlueDot_BME280 bme;
+TelnetSpy ts;
 
 // initialize LED on GPIO2 as output and Pull down
 void initLed(gpio_num_t pin) {
@@ -37,6 +41,17 @@ void initLed(gpio_num_t pin) {
   gpioLed.pull_down_en = GPIO_PULLDOWN_ENABLE;
   gpioLed.intr_type    = GPIO_INTR_DISABLE;
   ESP_ERROR_CHECK(gpio_config(&gpioLed));
+}
+
+// initialize Button on GPIO as input and Pull down
+void initBtn(gpio_num_t pin) {
+  gpio_config_t gpioBtn;
+  gpioBtn.pin_bit_mask = ((1ULL<< pin));
+  gpioBtn.mode         = GPIO_MODE_INPUT;
+  gpioBtn.pull_up_en   = GPIO_PULLUP_DISABLE;
+  gpioBtn.pull_down_en = GPIO_PULLDOWN_ENABLE;
+  gpioBtn.intr_type    = GPIO_INTR_DISABLE;
+  ESP_ERROR_CHECK(gpio_config(&gpioBtn));
 }
 
 void initPir(gpio_num_t pin) {
@@ -57,8 +72,6 @@ bool initI2c() {
 }
 
 void doBme280(void * param) {
-  float tempF, humPct, presshPa;
-  bool bmeDetected;
 
   bme.parameter.communication = 0; // I2C comm
   bme.parameter.I2CAddress = 0x77; // BME address 0x77
@@ -74,7 +87,6 @@ void doBme280(void * param) {
     SERIAL_PORT.printf("%lu: BME280 Sensor not found!\n", TS);
     bmeDetected = false;
     vTaskDelay(10000/portTICK_PERIOD_MS);
-    //os_setTimedCallback(&bmejob, os_getTime() + sec2osticks(30), do_bme_recheck);
   }
   SERIAL_PORT.printf("%lu: BME280 Sensor found!\n", TS);
   bmeDetected = true;
@@ -84,7 +96,7 @@ void doBme280(void * param) {
     tempF = bme.readTempF() + TEMPOFFSET;
     humPct = bme.readHumidity() + HUMOFFSET;
     presshPa = bme.readPressure() + PRESSOFFSET;
-    SERIAL_PORT.printf("%lu: Temp: %.1f F | RH: %.0f % | Press: %.0f hPa\n", TS, tempF, humPct, presshPa);
+    SERIAL_PORT.printf("%lu: Temp: %.1f F | RH: %.0f RH | Press: %.0f hPa\n", TS, tempF, humPct, presshPa);
     vTaskDelay(30000/portTICK_PERIOD_MS);
   }
   vTaskDelete(NULL);
@@ -145,6 +157,46 @@ void doLedFlash(void * param) {
   vTaskDelete(NULL);
 }
 
+void doBtnPress(void * param) {
+  bool btnCurrentState;
+  ESP_LOGI(TAG,"BUTTON TASK STARTING");
+
+  btnCurrentState = gpio_get_level(BTNPIN);
+
+  while(true) {
+    if(gpio_get_level(BTNPIN) && btnCurrentState == 0) {
+      SERIAL_PORT.printf("%lu: Button Pressed.\n", TS);
+      btnCurrentState = 1;
+      vTaskDelay(300/portTICK_PERIOD_MS);
+    }
+    else if(!gpio_get_level(BTNPIN) && btnCurrentState == 1) {
+      SERIAL_PORT.printf("%lu: Button Released.\n", TS);
+      btnCurrentState = 0;
+      vTaskDelay(300/portTICK_PERIOD_MS);
+    }
+  }
+  ESP_LOGI(TAG,"Deleting BUTTON TASK");
+  vTaskDelete(NULL);
+}
+
+void doTelnetSpy(void* param) {
+  while(xSemaphoreTake(semWifi,5000/portTICK_PERIOD_MS) == pdFALSE) {
+    ESP_LOGD(TAG, "Failed to take Wifi Semaphore within %u ms.\n", 5000);
+  }
+  xSemaphoreGive(semWifi);
+  SERIAL_PORT.begin(115200);
+  ESP_LOGI(TAG,"TELNETSPY TASK STARTING");
+  // SERIAL_PORT.setCallbackOnConnect(telnetConnected);
+  // SERIAL_PORT.setCallbackOnDisconnect(telnetDisconnected);
+
+  while(true) {
+    ts.handle();
+    
+    vTaskDelay(1000/portTICK_PERIOD_MS);
+  }
+  vTaskDelete(NULL);
+}
+
 void esp_info() {
   esp_chip_info_t chip_info;
   esp_chip_info(&chip_info);
@@ -187,6 +239,7 @@ void setup() {
   initLed(LED);
   initPir(PIRPIN);
   initI2c();
+  initBtn(BTNPIN);
   if(nvs.begin("esp32", false))
     ESP_LOGI(TAG,"NVS Initialized.");
   else
@@ -198,20 +251,27 @@ void setup() {
   xSemaphoreGive(semWifi);
   xSemaphoreTake(semWifi, portMAX_DELAY);
 
+  // Re priority - higher number is higher priority
   xTaskCreatePinnedToCore(&doInitWifiSta, "InitWifi", 8192, NULL, 0, &tskInitWifi, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
   //xTaskCreatePinnedToCore(&doLedFlash, "LedFlash", 2048, (void *) &ledBlinks, 0, &tskLedFlash, app_cpu);
   xTaskCreatePinnedToCore(&doLedFlash, "LedFlash", 2048, NULL, 0, &tskLedFlash, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
+  xTaskCreatePinnedToCore(&doTelnetSpy, "TelnetSpy", 8192, NULL, 0, &tskTelnetSpy, app_cpu);
+  vTaskDelay(500/portTICK_PERIOD_MS);
   xTaskCreatePinnedToCore(&doNtp, "NTP", 2048, NULL, 0, &tskNtp, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
-  xTaskCreatePinnedToCore(&doMqtt, "Mqtt", 2048, NULL, 0, &tskMqtt, app_cpu);
+  xTaskCreatePinnedToCore(&doMqtt, "Mqtt", 8192, NULL, 0, &tskMqtt, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
   xTaskCreatePinnedToCore(&doPir, "PIR", 2048, NULL, 0, &tskPir, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
   xTaskCreatePinnedToCore(&doOta, "OTA", 2048, NULL, 0, &tskOta, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
   xTaskCreatePinnedToCore(&doBme280, "BME280", 2048, NULL, 0, &tskBme280, app_cpu);
+  vTaskDelay(500/portTICK_PERIOD_MS);
+  xTaskCreatePinnedToCore(&doBtnPress, "Button", 2048, NULL, 0, &tskBtnPress, app_cpu);
+  vTaskDelay(500/portTICK_PERIOD_MS);
+  xTaskCreatePinnedToCore(&doNeoLoop, "Neo Matrix", 2048, NULL, 0, &tskNeoMatrix, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
 }
 

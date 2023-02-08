@@ -1,8 +1,6 @@
 #include "jclmqtt.h"
-#include <string>
-#include <sys/time.h>
 
-#define TS ((tv.tv_sec == NULL) ? millis(): tv.tv_sec)
+//#define TS ((tv.tv_sec == NULL) ? millis(): tv.tv_sec)
 
 WiFiClient espClient;
 PubSubClient mqttclient(espClient);
@@ -10,7 +8,9 @@ PubSubClient mqttclient(espClient);
 extern struct timeval tv;
 extern struct tm timeinfo;
 extern  SemaphoreHandle_t semWifi;
-//extern TelnetSpy ts;
+extern TelnetSpy ts;
+extern float tempF, humPct, presshPa;
+extern bool bmeDetected;
 
 void reconnect() {
   // Loop until we're reconnected
@@ -41,8 +41,9 @@ void doMqtt(void * param) {
   ESP_LOGI(TAG,"MQTT TASK STARTING");
   // unsigned long lastMsg = millis();
   char mqtttopic[101];
-  char mqttpayload[55];
+  char mqttpayload[1024];
   //uint iteration = 0;
+  DynamicJsonDocument doc(1024);
 
   mqttclient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttclient.setKeepAlive(15);
@@ -63,29 +64,80 @@ void doMqtt(void * param) {
     mqttclient.loop();
 
     if(mqttclient.connected()) {
-      strncpy(mqtttopic, HOSTNAME, 100);
-      strncat(mqtttopic, "/heartbeatout", 100);
+      doc["hostname"] = HOSTNAME;
       if(&timeinfo != NULL) {
-      strncpy(mqttpayload, asctime(&timeinfo), 50);
+        doc["heartbeatout"] = asctime(&timeinfo);
       }
       else {
-        snprintf(mqttpayload, 50, "%lu", millis());
+        doc["heartbeatout"] = millis();
       }
+      doc["heartbeatout"] = asctime(&timeinfo);
+      doc["appversion"] = APP_VERSION;
+      doc["temperature"] = tempF + TEMPOFFSET;
+      doc["relativehumidty"] = humPct + HUMOFFSET;
+      doc["pressure"] =  presshPa + PRESSOFFSET;
+      doc["runtime"] = float(millis())/(1000.0*60*60*24);
+      doc["time"] = doc["heartbeatout"];
+      doc["ipaddress"] = WiFi.localIP().toString().c_str();
+
+      serializeJson(doc, mqttpayload, sizeof(mqttpayload));
+      strncpy(mqtttopic, "host/", 100);
+      strncat(mqtttopic, HOSTNAME, 100);
       mqttclient.publish(mqtttopic, mqttpayload);
-      SERIAL_PORT.printf("%lu: Published %s\n", TS, mqtttopic);
-      strncpy(mqtttopic, HOSTNAME, sizeof(HOSTNAME));
-      mqttclient.publish(strncat(mqtttopic,"/appversion",27), APP_VERSION);
-      //SERIAL_PORT.printf("%lu: Published %s\n", TS, mqtttopic);
-      strncpy(mqtttopic, HOSTNAME, 100);
-      strncat(mqtttopic, "/hostname", 100);
-      mqttclient.publish(mqtttopic, HOSTNAME);
-      strncpy(mqtttopic, HOSTNAME, 100);
-      strncat(mqtttopic, "/ipaddress", 100);
-      snprintf(mqttpayload, 25, "%s", WiFi.localIP().toString().c_str());
-      mqttclient.publish(mqtttopic, mqttpayload);
+
+
+      // strncpy(mqtttopic, HOSTNAME, 100);
+      // strncat(mqtttopic, "/heartbeatout", 100);
+      // if(&timeinfo != NULL) {
+      // strncpy(mqttpayload, asctime(&timeinfo), 50);
+      // }
+      // else {
+      //   snprintf(mqttpayload, 50, "%lu", millis());
+      // }
+      // mqttclient.publish(mqtttopic, mqttpayload);
+      // SERIAL_PORT.printf("%lu: Published %s\n", TS, mqtttopic);
+      // strncpy(mqtttopic, HOSTNAME, sizeof(HOSTNAME));
+      // mqttclient.publish(strncat(mqtttopic,"/appversion",27), APP_VERSION);
+      // //SERIAL_PORT.printf("%lu: Published %s\n", TS, mqtttopic);
+      // strncpy(mqtttopic, "host/", 100);
+      // strncat(mqtttopic, HOSTNAME, 100);
+      // strncat(mqtttopic, "/hostname", 100);
+      // mqttclient.publish(mqtttopic, HOSTNAME);
+      // if(bmeDetected) {
+      //   strncpy(mqtttopic, "host/", 100);
+      //   strncat(mqtttopic, HOSTNAME, 100);
+      //   strncat(mqtttopic, "/temperature", 100);
+      //   snprintf(mqttpayload, 6, "%5.2f deg F", tempF + TEMPOFFSET);
+      //   mqttclient.publish(mqtttopic, mqttpayload);
+      //   strncpy(mqtttopic, "host/", 100);
+      //   strncat(mqtttopic, HOSTNAME, 100);
+      //   strncat(mqtttopic, "/relativehumidity", 100);
+      //   snprintf(mqttpayload, 6, "%2.2f RH", humPct + HUMOFFSET);
+      //   mqttclient.publish(mqtttopic, mqttpayload);
+      //   strncpy(mqtttopic, "host/", 100);
+      //   strncat(mqtttopic, HOSTNAME, 100);
+      //   strncat(mqtttopic, "/pressure", 100);
+      //   snprintf(mqttpayload, 6, "%4.2f hPa", presshPa + PRESSOFFSET);
+      //   mqttclient.publish(mqtttopic, mqttpayload);
+      // }
+      // strncpy(mqtttopic, "host/", 100);
+      // strncat(mqtttopic, HOSTNAME, 100);
+      // strncat(mqtttopic, "/runtime", 100);
+      // snprintf(mqttpayload, 15, "%.4f days.", float(millis())/(1000.0*60*60*24));
+      // mqttclient.publish(mqtttopic, mqttpayload);
+      // strncpy(mqtttopic, "host/", 100);
+      // strncat(mqtttopic, HOSTNAME, 100);
+      // strncat(mqtttopic, "/time", 100);
+      // mqttclient.publish(mqtttopic, asctime(&timeinfo));
+      // strncpy(mqtttopic, "host/", 100);
+      // strncat(mqtttopic, HOSTNAME, 100);
+      // strncat(mqtttopic, "/ipaddress", 100);
+      // snprintf(mqttpayload, 25, "%s", WiFi.localIP().toString().c_str());
+      // mqttclient.publish(mqtttopic, mqttpayload);
     }
-    mqttclient.disconnect();
-    vTaskDelay(300000/portTICK_PERIOD_MS);
+    //mqttclient.disconnect();
+    //vTaskDelay(300000/portTICK_PERIOD_MS);
+    vTaskDelay(60000/portTICK_PERIOD_MS);
   }
   vTaskDelete(NULL);
 }

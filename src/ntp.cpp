@@ -5,6 +5,7 @@ extern char strftime_buf[64];
 extern struct tm timeinfo;
 extern struct timeval tv;
 extern SemaphoreHandle_t semWifi;
+extern TelnetSpy ts;
 static const char TAG[] = __FILE__;
 
 void time_sync_notification_cb(struct timeval *tval) {
@@ -24,6 +25,7 @@ void doNtp(void * params) {
 
   //setenv("TZ", TZ, 1);
   //tzset();
+  //configTime(UTCOFFSETSEC, DSTOFFSETSEC, NTP_SERVER0, NTP_SERVER1, NTP_SERVER2);
   sntp_setoperatingmode(SNTP_OPMODE_POLL);
   sntp_setservername(0, NTP_SERVER0);
   sntp_setservername(1, NTP_SERVER1);
