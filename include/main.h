@@ -1,15 +1,17 @@
 #pragma once
 
 #include "global.h"
+#ifdef WIFI
 #include "jclwifi.h"            // Wifi
 #include "ntp.h"                // NTP
 #include "jclmqtt.h"            // MQTT
 #include "esp_ota.h"            // OTA
+#endif // END WIFI
 #include <Esp.h>                // ESP32 chip information
 #include <Preferences.h>        // NVS
-#include <Wire.h>               // I2C
-#include "BlueDot_BME280.h"     // BME280
-#include "neomatrix.h"          // NeoPixel Matrix
+#ifdef BLESERVER
+#include "jclble.h"
+#endif
 
 // Use only core 1
 #if CONFIG_FREERTOS_UNICORE

@@ -1,6 +1,7 @@
 #include "esp_ota.h"
 
 extern  SemaphoreHandle_t semWifi;
+static const char TAG[] = __FILE__;
 
 void doOta(void * param) {
     // Take Wifi semaphore - we depend upon wifi

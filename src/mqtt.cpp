@@ -8,9 +8,10 @@ PubSubClient mqttclient(espClient);
 extern struct timeval tv;
 extern struct tm timeinfo;
 extern  SemaphoreHandle_t semWifi;
-extern TelnetSpy ts;
+// extern TelnetSpy ts;
 extern float tempF, humPct, presshPa;
 extern bool bmeDetected;
+static const char TAG[] = __FILE__;
 
 void reconnect() {
   // Loop until we're reconnected
@@ -65,13 +66,13 @@ void doMqtt(void * param) {
 
     if(mqttclient.connected()) {
       doc["hostname"] = HOSTNAME;
-      if(&timeinfo != NULL) {
-        doc["heartbeatout"] = asctime(&timeinfo);
-      }
-      else {
+      // if(&timeinfo != NULL) {
+      //   doc["heartbeatout"] = asctime(&timeinfo);
+      // }
+      // else {
         doc["heartbeatout"] = millis();
-      }
-      doc["heartbeatout"] = asctime(&timeinfo);
+      // }
+    
       doc["appversion"] = APP_VERSION;
       doc["temperature"] = tempF + TEMPOFFSET;
       doc["relativehumidty"] = humPct + HUMOFFSET;
@@ -81,9 +82,7 @@ void doMqtt(void * param) {
       doc["ipaddress"] = WiFi.localIP().toString().c_str();
 
       serializeJson(doc, mqttpayload, sizeof(mqttpayload));
-      strncpy(mqtttopic, "host/", 100);
-      strncat(mqtttopic, HOSTNAME, 100);
-      mqttclient.publish(mqtttopic, mqttpayload);
+      mqttclient.publish(MQTT_TOPIC, mqttpayload);
 
 
       // strncpy(mqtttopic, HOSTNAME, 100);

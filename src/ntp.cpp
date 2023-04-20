@@ -5,7 +5,7 @@ extern char strftime_buf[64];
 extern struct tm timeinfo;
 extern struct timeval tv;
 extern SemaphoreHandle_t semWifi;
-extern TelnetSpy ts;
+// extern TelnetSpy ts;
 static const char TAG[] = __FILE__;
 
 void time_sync_notification_cb(struct timeval *tval) {
