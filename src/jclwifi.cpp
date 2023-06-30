@@ -6,6 +6,20 @@ time_t wifidisconnecttime = ULONG_MAX;
 extern SemaphoreHandle_t semWifi;
 // extern TelnetSpy ts;
 static const char TAG[] = __FILE__;
+uint8_t hostIpAddress[4], gatewayAddress[4], subnetAddress[4], dns2Address[4]; 
+uint8_t dns1Address[4];
+
+// Convert IP Addresses from strings to byte arrays of 4 bytes
+void stringToByteArray(const char* str, char sep, byte* bytes, int maxBytes, int base) {
+    for (int i = 0; i < maxBytes; i++) {
+        bytes[i] = strtoul(str, NULL, base);  // Convert byte
+        str = strchr(str, sep);               // Find next separator
+        if (str == NULL || *str == '\0') {
+            break;                            // No more separators, exit
+        }
+        str++;                                // Point to next character after separator
+    }
+}
 
 void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info) {
   ESP_LOGI(TAG, "%lu: WiFi connected.\n", TS);
@@ -18,7 +32,13 @@ void doInitWifiSta(void * param) {
   int connectTries = 0;
   ESP_LOGI(TAG,"WIFI TASK STARTING");
   
-  WiFi.config(IPAddress(HOSTIPADDRESS), IPAddress(GATEWAY), IPAddress(SUBNET), IPAddress(DNS1), IPAddress(DNS2));
+  // Convert from String to byte array
+  stringToByteArray(HOSTIPADDRESS, '.', hostIpAddress, 4, 10);
+  stringToByteArray(GATEWAY, '.', gatewayAddress, 4, 10);
+  stringToByteArray(SUBNET, '.', subnetAddress, 4, 10);
+  stringToByteArray(DNS1, '.', dns1Address, 4, 10);
+  stringToByteArray(DNS2, '.', dns2Address, 4, 10);
+  WiFi.config(hostIpAddress, gatewayAddress, subnetAddress, dns1Address, dns2Address);
   // WiFi.onEvent(WiFiStationConnected, SYSTEM_EVENT_STA_GOT_IP);
   WiFi.onEvent(WiFiStationConnected, ARDUINO_EVENT_WIFI_STA_GOT_IP);
   WiFi.begin(AP_SSID, AP_PASS);
