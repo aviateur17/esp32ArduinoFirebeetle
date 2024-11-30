@@ -9,19 +9,14 @@ See README.md for more information
 
 #include "main.h"
 static const char TAG[] = __FILE__;
-time_t now;
-char strftime_buf[64];
-struct tm timeinfo;
-struct timeval tv;
 int ledBlinks = 2;
-float tempF, humPct, presshPa;
-bool bmeDetected;
-TaskHandle_t tskLedFlash, tskPir, tskBme280, tskBtnPress, tskTelnetSpy, tskInitWifi, tskBleServer;
-TaskHandle_t tskNeoMatrix, tskNtp, tskMqtt, tskOta;
+TaskHandle_t tskLedFlash, tskPir, tskInitWifi, tskBleServer, tskReadBatt, tskReadTempInt, tskReadTempExt;
+TaskHandle_t tskMqtt;
 SemaphoreHandle_t semWifi;
 Preferences nvs;
-// BlueDot_BME280 bme;
-// TelnetSpy ts;
+unsigned long tempIntAdc, tempIntOhms, tempExtAdc, tempExtOhms, BattAdc;
+float tempIntDegF, tempExtDegF, BattVgpio, BattVoltage;
+
 
 // initialize LED on GPIO2 as output and Pull down
 void initLed(gpio_num_t pin) {
@@ -34,12 +29,120 @@ void initLed(gpio_num_t pin) {
   ESP_ERROR_CHECK(gpio_config(&gpioLed));
 }
 
+void doReadBatt(void * param) {
+  unsigned long AdcVal;
+  float Vbatt, Vgpio;
+  
+  ESP_LOGI(TAG,"ADC Batt TASK STARTING");
+  analogReadResolution(12);
+  // analogSetAttenuation(ADC_6db); 
+  // analogSetPinAttenuation(BATTVPIN, ADC_6db); // 150mv - 1750 mv
+  analogSetPinAttenuation(BATTVPIN, ADC_11db); // 150mv - 2450 mv
+  // 150mv = 0, 2450mv = 4095
+  adcAttachPin(BATTVPIN);
 
+
+  while(true) {
+    AdcVal = 0;
+    for(int i=0; i<15; i++) {
+      AdcVal += analogRead(BATTVPIN);
+      vTaskDelay(50/portTICK_PERIOD_MS);
+    }
+    AdcVal /= 15;
+    Vgpio = (float)AdcVal/4095 * 3.58;
+    Vbatt = Vgpio * (99000 + 99700)/99700;
+    ESP_LOGI(TAG,"ADC: %i, Vgpio %f, Vbatt %f",AdcVal, Vgpio, Vbatt);
+    BattAdc = AdcVal;
+    BattVgpio = Vgpio;
+    BattVoltage = Vbatt;
+    vTaskDelay(2000/portTICK_PERIOD_MS);
+  }
+
+  ESP_LOGE(TAG,"Deleting ADC Batt Task");
+  vTaskDelete(NULL);
+
+}
+
+void doReadTempInt(void * param) {
+  unsigned long AdcVal, Rload;
+  float Vgpio, tempF;
+  
+  ESP_LOGI(TAG,"ADC Temp Int TASK STARTING");
+  analogReadResolution(12);
+  analogSetPinAttenuation(TEMPINTPIN, ADC_6db); // 150mv - 1750 mv
+  // analogSetPinAttenuation(BATTVPIN, ADC_11db); // 150mv - 2450 mv
+  // 150mv = 0, 2450mv = 4095
+  adcAttachPin(TEMPINTPIN);
+
+
+  while(true) {
+    AdcVal = 0;
+    for(int i=0; i<15; i++) {
+      AdcVal += analogRead(TEMPINTPIN);
+      vTaskDelay(50/portTICK_PERIOD_MS);
+    }
+    AdcVal /= 15;
+    // (AdcVal == 0)?AdcVal=1:AdcVal;      // Min Adc 1
+    // (AdcVal >= 3880)?AdcVal=3879:AdcVal; // Max Adc 3955
+    Vgpio = (float)AdcVal/4095 * 1.750 + 0.150;
+    // Rload = 18710 * (Vgpio/3.3 - 1);
+    Rload = Vgpio * 18710/(3.3 - Vgpio);
+    tempF = (1/((1/298.15) + 1/3950.0*log((float)Rload/10000.0))-273.15)*9/5+32;
+    ESP_LOGI(TAG,"ADC value: %i, resistance: %i, temp deg f: %f",AdcVal, Rload, tempF);
+    tempIntAdc = AdcVal;
+    tempIntOhms = Rload;
+    tempIntDegF = tempF;
+    vTaskDelay(2000/portTICK_PERIOD_MS);
+  }
+
+  ESP_LOGE(TAG,"Deleting ADC Temp Int Task");
+  vTaskDelete(NULL);
+
+}
+
+void doReadTempExt(void * param) {
+  unsigned long AdcVal, Rload;
+  float Vgpio, tempF;
+  
+  ESP_LOGI(TAG,"ADC Temp Ext TASK STARTING");
+  analogReadResolution(12);
+  analogSetPinAttenuation(TEMPEXTPIN, ADC_6db); // 150mv - 1750 mv
+  // analogSetPinAttenuation(BATTVPIN, ADC_11db); // 150mv - 2450 mv
+  // 150mv = 0, 2450mv = 4095
+  adcAttachPin(TEMPEXTPIN);
+
+
+  while(true) {
+    AdcVal = 0;
+    for(int i=0; i<15; i++) {
+      AdcVal += analogRead(TEMPEXTPIN);
+      vTaskDelay(50/portTICK_PERIOD_MS);
+    }
+    AdcVal /= 15;
+    // (AdcVal == 0)?AdcVal=1:AdcVal;      // Min Adc 1
+    // (AdcVal >= 3880)?AdcVal=3879:AdcVal; // Max Adc 3955
+    Vgpio = (float)AdcVal/4095 * 1.750 + 0.150;
+    // Rload = 21440 * (Vgpio/3.3 - 1);
+    Rload = Vgpio * 21440/(3.3 - Vgpio);
+    tempF = (1/((1/298.15) + 1/3950.0*log((float)Rload/10000.0))-273.15)*9/5+32;
+    ESP_LOGI(TAG,"ADC value: %i, resistance: %i, temp deg f: %f",AdcVal, Rload, tempF);
+    tempExtAdc = AdcVal;
+    tempExtOhms = Rload;
+    tempExtDegF = tempF;
+    vTaskDelay(2000/portTICK_PERIOD_MS);
+  }
+
+  ESP_LOGE(TAG,"Deleting ADC Temp Ext Task");
+  vTaskDelete(NULL);
+
+}
 
 void doLedFlash(void * param) {
   int numFlashes = 0;
 
   ESP_LOGI(TAG,"LED TASK STARTING");
+
+  initLed(LED);
 
   gpio_set_level(LED, LEDOFF);
   vTaskDelay(88/portTICK_PERIOD_MS);
@@ -63,7 +166,7 @@ void doLedFlash(void * param) {
     }
     vTaskDelay(2000/portTICK_PERIOD_MS);
   }
-  ESP_LOGI(TAG,"Deleting LED TASK");
+  ESP_LOGE(TAG,"Deleting LED TASK");
   vTaskDelete(NULL);
 }
 
@@ -123,8 +226,9 @@ void setup() {
   SERIAL_PORT.begin(115200);
   delay(5000);
   ESP_LOGI(TAG,"Starting...");
-  ESP_LOGI(TAG,"ESP32S3 Seeed Xiao Board");
-  ESP_LOGI(TAG,"**** ESP32 S3 Arduno Seeed Xiao board testing. ****");
+  ESP_LOGI(TAG,"ESP32 DFRobot Board");
+  ESP_LOGI(TAG,"**** ESP32 Arduino DFRobot. ****");
+  ESP_LOGI(TAG,"**** DFRobotESP32TempsBattProtoBoard Project ****");
   
   ESP_LOGE(TAG,"Log Error Message...");       // Lowest log level
   ESP_LOGW(TAG,"Log Warning Message...");
@@ -136,14 +240,22 @@ void setup() {
   ESP_LOGI(TAG,"Reset Reason: %i",resetReason);
   
   esp_info();
-  
-  initLed(LED);
+
   if(nvs.begin("esp32", false))
     ESP_LOGI(TAG,"NVS Initialized.");
   else
     ESP_LOGE(TAG,"Error initializing NVS.");
   ESP_LOGI(TAG,"%u free entries in NVS.",nvs.freeEntries());
   nvs.end(); 
+
+  #ifdef TEMP
+  xTaskCreatePinnedToCore(&doReadBatt, "ReadBattV", 2048, NULL, 0, &tskReadBatt, app_cpu);
+  vTaskDelay(500/portTICK_PERIOD_MS);
+  xTaskCreatePinnedToCore(&doReadTempInt, "ReadTempInt", 2048, NULL, 0, &tskReadTempInt, app_cpu);
+  vTaskDelay(500/portTICK_PERIOD_MS);
+  xTaskCreatePinnedToCore(&doReadTempExt, "ReadTempExt", 2048, NULL, 0, &tskReadTempExt, app_cpu);
+  vTaskDelay(500/portTICK_PERIOD_MS);
+  #endif
 
   #ifdef WIFI
   semWifi = xSemaphoreCreateBinary();
@@ -153,14 +265,15 @@ void setup() {
   // Re priority - higher number is higher priority
   xTaskCreatePinnedToCore(&doInitWifiSta, "InitWifi", 8192, NULL, 0, &tskInitWifi, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
-  xTaskCreatePinnedToCore(&doNtp, "NTP", 2048, NULL, 0, &tskNtp, app_cpu);
-  vTaskDelay(500/portTICK_PERIOD_MS);
+  // xTaskCreatePinnedToCore(&doNtp, "NTP", 2048, NULL, 0, &tskNtp, app_cpu);
+  // vTaskDelay(500/portTICK_PERIOD_MS);
   xTaskCreatePinnedToCore(&doMqtt, "Mqtt", 8192, NULL, 0, &tskMqtt, app_cpu);
   vTaskDelay(500/portTICK_PERIOD_MS);
-  xTaskCreatePinnedToCore(&doOta, "OTA", 2048, NULL, 0, &tskOta, app_cpu);
-  vTaskDelay(500/portTICK_PERIOD_MS);
+  // xTaskCreatePinnedToCore(&doOta, "OTA", 2048, NULL, 0, &tskOta, app_cpu);
+  // vTaskDelay(500/portTICK_PERIOD_MS);
   #endif // END WIFI
   xTaskCreatePinnedToCore(&doLedFlash, "LedFlash", 2048, (void *) &ledBlinks, 0, &tskLedFlash, app_cpu);
+
   // xTaskCreatePinnedToCore(&doLedFlash, "LedFlash", 2048, NULL, 0, &tskLedFlash, app_cpu);
   // vTaskDelay(500/portTICK_PERIOD_MS);
   // xTaskCreatePinnedToCore(&doPir, "PIR", 2048, NULL, 0, &tskPir, app_cpu);
@@ -174,6 +287,15 @@ void setup() {
   // xTaskCreatePinnedToCore(&doBleServer, "BLE Server", 8096, NULL, 0, &tskBleServer, app_cpu);
   // doBleServer(nullptr);
   vTaskDelay(500/portTICK_PERIOD_MS);
+  #ifdef SLEEP
+  ESP_LOGI(TAG,"Sleeping.");
+  // esp_sleep_enable_timer_wakeup(10000000); // 10 seconds
+  esp_sleep_enable_timer_wakeup(1000000 * 60 * 10); // 10 minutes
+  // esp_bluedroid_disable();
+  // esp_bt_controller_disable();
+  // esp_wifi_stop();
+  esp_deep_sleep_start();
+  #endif
 }
 
 void loop() {

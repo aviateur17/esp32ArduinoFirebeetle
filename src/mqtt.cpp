@@ -5,12 +5,9 @@
 WiFiClient espClient;
 PubSubClient mqttclient(espClient);
 
-extern struct timeval tv;
-extern struct tm timeinfo;
 extern  SemaphoreHandle_t semWifi;
-// extern TelnetSpy ts;
-extern float tempF, humPct, presshPa;
-extern bool bmeDetected;
+extern unsigned long tempIntAdc, tempIntOhms, tempExtAdc, tempExtOhms, BattAdc;
+extern float tempIntDegF, tempExtDegF, BattVgpio, BattVoltage;
 static const char TAG[] = __FILE__;
 
 void reconnect() {
@@ -42,13 +39,14 @@ void doMqtt(void * param) {
   ESP_LOGI(TAG,"MQTT TASK STARTING");
   // unsigned long lastMsg = millis();
   char mqtttopic[101];
-  char mqttpayload[1024];
+  char mqttpayload[2048];
   //uint iteration = 0;
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(2048);
 
   mqttclient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttclient.setKeepAlive(15);
   mqttclient.setSocketTimeout(3);
+  mqttclient.setBufferSize(2048);
   
   while(xSemaphoreTake(semWifi,5000/portTICK_PERIOD_MS) == pdFALSE) {
     ESP_LOGD(TAG, "Failed to take Wifi Semaphore within %u ms.\n", 5000);
@@ -72,14 +70,23 @@ void doMqtt(void * param) {
       // else {
         doc["heartbeatout"] = millis();
       // }
-    
+      doc["program"] = PROGNAME;
       doc["appversion"] = APP_VERSION;
-      doc["temperature"] = tempF + TEMPOFFSET;
-      doc["relativehumidty"] = humPct + HUMOFFSET;
-      doc["pressure"] =  presshPa + PRESSOFFSET;
+      // doc["temperature"] = tempF + TEMPOFFSET;
+      // doc["relativehumidty"] = humPct + HUMOFFSET;
+      // doc["pressure"] =  presshPa + PRESSOFFSET;
       doc["runtime"] = float(millis())/(1000.0*60*60*24);
       doc["time"] = doc["heartbeatout"];
       doc["ipaddress"] = WiFi.localIP().toString().c_str();
+      doc["tempIntAdc"] = tempIntAdc;
+      doc["tempIntOhms"] = tempIntOhms;
+      doc["tempIntDegF"] = tempIntDegF;
+      doc["tempExtAdc"] = tempExtAdc;
+      doc["tempExtOhms"] = tempExtOhms;
+      doc["tempExtDegF"] = tempExtDegF;
+      doc["BattAdc"] = BattAdc;
+      doc["BattVgpio"] = BattVgpio;
+      doc["BattVoltage"] = BattVoltage;
 
       serializeJson(doc, mqttpayload, sizeof(mqttpayload));
       mqttclient.publish(MQTT_TOPIC, mqttpayload);
